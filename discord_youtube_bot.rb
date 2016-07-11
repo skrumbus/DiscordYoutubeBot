@@ -96,6 +96,9 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       now = Time.now
       if now.hour == 0 and now.minute == 0
         update_playlist_titles
+        save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
+        save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
+        save_hash_to_file hash: @watching_channels, filename: "watching_channels"
       end
     end
   end
@@ -253,24 +256,16 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       @scraping[channel.id.to_s] = true
       puts "Processing past messages from channel '#{channel.name}'"
       messages = channel.history(100, nil, @most_recent_messages[channel.id.to_s])
+      is_forwards = !@most_recent_messages[channel.id.to_s].nil?
       videos = Array.new
       count = 0
-      old_most_recent_message = @most_recent_messages[channel.id.to_s].nil?
       if messages.size > 0
-        if old_most_recent_message.nil?
-          new_most_recent_message = messages[0].id
-        else
-          new_most_recent_message = messages[-1].id
-        end
+        new_most_recent_message = messages[0].id
       else
         new_most_recent_message = nil
       end
-      done = false
-      while messages.size > 0 and not done do
-        if messages.size < 100
-          done = true
-        end
-        messages.each do |message|
+      while messages.size > 0 do
+        (is_forwards ? messages.reverse : messages).each do |message|
           results = process_message_for_videos message: message
           unless results.nil?
             results.each do |result|
@@ -280,17 +275,20 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
           count = count + 1
         end
         puts "  Processed #{count} messages, found #{videos.size} videos..."
-        if not done
-          if old_most_recent_message.nil? #going backwards
-            messages = channel.history(100, messages[-1].id)
-          else #going forwards (this is pretty dumb, but oh well)
-            messages = channel.history(100, messages[0].id)
-          end
+        new_most_recent_message = is_forwards ? messages[0].id : new_most_recent_message
+        if is_forwards #going forwards to newest
+          messages = channel.history(100, nil, messages[0].id)
+        else #going backwards to infinity
+          messages = channel.history(100, messages[-1].id)
         end
       end
       @most_recent_messages[channel.id.to_s] = new_most_recent_message
       @scraping[channel.id.to_s] = false
-      videos.reverse
+      if not is_forwards
+        videos.reverse
+      else
+        videos
+      end
     end
   end
 end
