@@ -267,11 +267,10 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       end
       done = false
       while messages.size > 0 and not done do
+        if messages.size < 100
+          done = true
+        end
         messages.each do |message|
-          if message.id == old_most_recent_message
-            done = true
-            break
-          end
           results = process_message_for_videos message: message
           unless results.nil?
             results.each do |result|
