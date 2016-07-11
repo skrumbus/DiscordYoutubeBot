@@ -65,15 +65,16 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
               else
                 response = "Added video to the following playlist:"
               end
-              message.channel.send_message "#{response} https://www.youtube.com/watch?v=#{videos[0]['video_id']}&list=#{@channel_playlists[event.channel.id.to_s]}"
+              event.channel.send_message "#{response} https://www.youtube.com/watch?v=#{videos[0]['video_id']}&list=#{@channel_playlists[event.channel.id.to_s]}"
             elsif videos.size > 1
-              message.channel.send_message "Added #{non_duplicates.size} videos to the following playlist: https://www.youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
+              event.channel.send_message "Added #{non_duplicates.size} videos to the following playlist: https://www.youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
             end
           end
         end
       end
     end
     server_create do |event|
+      initialize_channel channel: event.channel
       event.server.default_channel.send_message "Hi! I'm the Discord YouTube bot. If you want me to start watching one of your channels for youtube videos, type \"#{@prefix}watch {true/false}\". The true/false option tells me whether or not I should check old messages for videos."
     end
     ready do |event|
@@ -108,6 +109,9 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     command :watch do |event, do_scrape|
       if ((not @owner.nil?) and event.user.id == @owner.id) or event.user.id == event.server.owner.id
         @watching_channels[event.channel.id.to_s] = !@watching_channels[event.channel.id.to_s]
+        if @channel_playlists[event.channel.id.to_s].nil?
+          initialize_channel channel: event.channel
+        end
         if @watching_channels[event.channel.id.to_s]
           event.channel.send_message "Now watching this channel for YouTube videos! Past messages will #{do_scrape ? '' : 'not '}be scanned for videos. All videos will be added to the following playlist: https://youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
           if do_scrape == 'true'
@@ -197,7 +201,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     is_duplicate = false
     unless items.size == 0
       items.each do |item|
-        if item.id == video_id
+        if item.video_id == video_id
           is_duplicate = true
           break
         end
@@ -267,7 +271,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
           end
           count = count + 1
         end
-        puts "  Processed #{count} messages..."
+        puts "  Processed #{count} messages, found #{videos.size} videos..."
         if not done
           if @most_recent_messages[channel.id.to_s].nil? #going backwards
             messages = channel.history(100, messages[-1].id)
