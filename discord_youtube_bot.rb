@@ -23,10 +23,11 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     configure_youtube client_id: client_id, client_secret: client_secret
     @youtube_client = refresh_token.nil? ? nil : Yt::Account.new(refresh_token: refresh_token)
     @do_delete = do_delete
-    @most_recent_messages = load_hash_from_file filename: "most_recent_messages.txt"
-    @channel_playlists = load_hash_from_file filename: "channel_playlists.txt"   
-    @watching_channels = load_hash_from_file filename: "watching_channels.txt"
+    @most_recent_messages = load_hash_from_file filename: "most_recent_messages"
+    @channel_playlists = load_hash_from_file filename: "channel_playlists"   
+    @watching_channels = load_hash_from_file filename: "watching_channels"
     @owner = owner
+    @scraping = {}
   end
   def youtube_client
     @youtube_client
@@ -53,7 +54,9 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
   end
   def configure_events
     message do |event|
-      unless event.text =~ /!watch.*/
+      unless event.text =~ /^!watch.*/
+        while @scraping[event.channel.id.to_s] do
+        end
         if @watching_channels[event.channel.id.to_s]
           @most_recent_messages[event.channel.id.to_s] = event.message.id
           videos = process_message_for_videos message: event.message
@@ -85,7 +88,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       servers.each do |server|
         server = server[1]
         server.text_channels.each do |channel|
-          initialize_channel channel: channel
+          initialize_channel channel: channel, do_scrape: true
         end
       end
     end
@@ -99,30 +102,31 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
   def configure_commands
     command :stop do |event|
       if (not @owner.nil?) and event.user.id == @owner.id
-        save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages.txt"
-        save_hash_to_file hash: @channel_playlists, filename: "channel_playlists.txt"
-        save_hash_to_file hash: @watching_channels, filename: "watching_channels.txt"
+        save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
+        save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
+        save_hash_to_file hash: @watching_channels, filename: "watching_channels"
         @owner.pm "Going down!"
         stop
+      end
+    end
+    command :scrape do |event|
+      if @watching_channels[event.channel.id.to_s]
+        if ((not @owner.nil?) and event.user.id == @owner.id) or event.user.id == event.server.owner.id
+          puts "Scraping all messages in channel for videos..."
+          @most_recent_messages[event.channel.id.to_s] = nil
+          initialize_channel channel: event.channel, do_scrape: true
+          puts "Done! https://youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
+        end
       end
     end
     command :watch do |event, do_scrape|
       if ((not @owner.nil?) and event.user.id == @owner.id) or event.user.id == event.server.owner.id
         @watching_channels[event.channel.id.to_s] = !@watching_channels[event.channel.id.to_s]
-        if @channel_playlists[event.channel.id.to_s].nil?
-          initialize_channel channel: event.channel
-        end
+        do_scrape = do_scrape == 'true'
         if @watching_channels[event.channel.id.to_s]
+          event.channel.send_message "Initializing playlist, one moment..."
+          initialize_channel channel: event.channel, do_scrape: do_scrape
           event.channel.send_message "Now watching this channel for YouTube videos! Past messages will #{do_scrape ? '' : 'not '}be scanned for videos. All videos will be added to the following playlist: https://youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
-          if do_scrape == 'true'
-            videos = process_past_messages channel: event.channel
-            unless videos.nil?
-              add_video_to_playlist video: videos, playlist_id: @channel_playlists[event.channel.id.to_s]
-            end
-          else
-            message = event.channel.history(1)
-            @most_recent_messages[event.channel.id.to_s] = message.size == 1 ? message[0].id : nil
-          end
           nil
         else
           event.channel.send_message "No longer watching this channel for videos."
@@ -130,7 +134,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       end
     end
   end
-  def initialize_channel(channel:)
+  def initialize_channel(channel:, do_scrape: false)
     if channel.is_a? Array
       channel.each do |c|
         initialize_channel channel: c
@@ -138,16 +142,18 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     else
       if @watching_channels[channel.id.to_s].nil?
         @watching_channels[channel.id.to_s] = false
-      end
-      if @channel_playlists[channel.id.to_s].nil?
-        @channel_playlists[channel.id.to_s] = @youtube_client.create_playlist(title: "#{channel.server.name}.#{channel.name}", privacy_status: "public").id
-      end
-      if @most_recent_messages[channel.id.to_s].nil?
-        if @watching_channels[channel.id.to_s]
+      elsif @watching_channels[channel.id.to_s]
+        if @channel_playlists[channel.id.to_s].nil?
+          @channel_playlists[channel.id.to_s] = @youtube_client.create_playlist(title: "#{channel.server.name}.#{channel.name}", privacy_status: "public").id
+        end
+        if do_scrape
           videos = process_past_messages channel: channel
           unless videos.nil?
             add_video_to_playlist video: videos, playlist_id: @channel_playlists[channel.id.to_s]
           end
+        else
+          message = channel.history(1)
+          @most_recent_messages[channel.id.to_s] = message.size == 0 ? nil : message[0].id
         end
       end
     end
@@ -155,6 +161,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
   end
   def load_hash_from_file(filename:)
     hash = {}
+    filename = filename + '.json'
     if File.exists? filename
       begin
         hash = JSON.parse(File.open(filename).read())
@@ -167,6 +174,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     hash
   end
   def save_hash_to_file(filename:, hash:)
+    filename = filename + '.json'
     File.open(filename, "w") do |file|
       file.write(JSON.pretty_generate hash)
     end
@@ -223,7 +231,6 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
           playlist.add_video video['video_id']
         rescue => error
           puts "Error adding video #{video['video_id']} to playlist #{playlist_id}."
-          puts error.inspect
         end
       end
     end
@@ -243,12 +250,14 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       end
       videos
     else
+      @scraping[channel.id.to_s] = true
       puts "Processing past messages from channel '#{channel.name}'"
       messages = channel.history(100, nil, @most_recent_messages[channel.id.to_s])
       videos = Array.new
       count = 0
+      old_most_recent_message = @most_recent_messages[channel.id.to_s].nil?
       if messages.size > 0
-        if @most_recent_messages[channel.id.to_s].nil?
+        if old_most_recent_message.nil?
           new_most_recent_message = messages[0].id
         else
           new_most_recent_message = messages[-1].id
@@ -259,7 +268,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       done = false
       while messages.size > 0 and not done do
         messages.each do |message|
-          if message.id == @most_recent_messages[channel.id.to_s]
+          if message.id == old_most_recent_message
             done = true
             break
           end
@@ -273,7 +282,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         end
         puts "  Processed #{count} messages, found #{videos.size} videos..."
         if not done
-          if @most_recent_messages[channel.id.to_s].nil? #going backwards
+          if old_most_recent_message.nil? #going backwards
             messages = channel.history(100, messages[-1].id)
           else #going forwards (this is pretty dumb, but oh well)
             messages = channel.history(100, messages[0].id)
@@ -281,6 +290,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         end
       end
       @most_recent_messages[channel.id.to_s] = new_most_recent_message
+      @scraping[channel.id.to_s] = false
       videos.reverse
     end
   end
@@ -291,8 +301,29 @@ if __FILE__ == $0
     bot = DiscordYoutubeBot.new token: ARGV[0], application_id: ARGV[1], client_id: ARGV[2], client_secret: ARGV[3], refresh_token: ARGV[4], owner: ARGV[5], prefix: '!'
     puts bot.invite_url
     bot.run
+  elsif ARGV.size == 0
+    if File.exists? 'options.json'
+      begin
+        options = JSON.parse(File.open('options.json').read())
+        bot = DiscordYoutubeBot.new(token: options['token'], 
+                                    application_id: options['application_id'],
+                                    client_id: options['client_id'],
+                                    client_secret: options['client_secret'],
+                                    refresh_token: options['refresh_token'],
+                                    owner: options['owner'],
+                                    prefix: '!')
+        puts bot.invite_url
+        bot.run
+      rescue JSON::ParserError => e
+        puts "Error: options.json is not a valid json file."
+        sleep
+      end
+    else
+      puts "Error: no options.json file found."
+      sleep
+    end
   else
-    puts "Error: Invalid number of arguments. Expected 6, got #{ARGV.size}."
+    puts "Error: Invalid number of arguments. Expected 0 or 6, got #{ARGV.size}."
     sleep
   end
 end

@@ -1,4 +1,5 @@
-channel_playlists.txt
-watching_channels.txt
-most_recent_messages.txt
+channel_playlists.json
+watching_channels.json
+most_recent_messages.json
+options.json
 
