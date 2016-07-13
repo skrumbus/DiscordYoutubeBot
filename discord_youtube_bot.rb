@@ -1,3 +1,4 @@
+require 'rubygems'
 require 'discordrb'
 class DiscordYoutubeBot < Discordrb::Commands::CommandBot
   require 'yt'
@@ -26,6 +27,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     @most_recent_messages = load_hash_from_file filename: "most_recent_messages"
     @channel_playlists = load_hash_from_file filename: "channel_playlists"   
     @watching_channels = load_hash_from_file filename: "watching_channels"
+    @delete_permission = load_hash_from_file filename: "delete_permission"
     @owner = owner
     @scraping = {}
   end
@@ -61,9 +63,9 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
           @most_recent_messages[event.channel.id.to_s] = event.message.id
           videos = process_message_for_videos message: event.message
           unless videos.nil?
-            add_video_to_playlist video: videos, playlist_id: @channel_playlists[event.channel.id.to_s]
+            duplicates = add_video_to_playlist video_id: videos, playlist_id: @channel_playlists[event.channel.id.to_s]
             if videos.size == 1
-              if videos[0]['is_duplicate']
+              if duplicates[0]
                 response = "Repost!"
               else
                 response = "Added video to the following playlist:"
@@ -78,7 +80,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     end
     server_create do |event|
       initialize_channel channel: event.channel
-      event.server.default_channel.send_message "Hi! I'm the Discord YouTube bot. If you want me to start watching one of your channels for youtube videos, type \"#{@prefix}watch {true/false}\". The true/false option tells me whether or not I should check old messages for videos."
+      event.server.default_channel.send_message "Hi! I'm the Discord YouTube bot. If you want me to start watching one of your channels for youtube videos, type \"#{@prefix}watch {true/false}\". The true/false option tells me whether or not I should check old messages for videos (this may take a while)."
     end
     ready do |event|
       unless @owner.nil?
@@ -92,15 +94,16 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         end
       end
     end
-    heartbeat do |event|
-      now = Time.now
-      if now.hour == 0 and now.minute == 0
-        update_playlist_titles
-        save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
-        save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
-        save_hash_to_file hash: @watching_channels, filename: "watching_channels"
-      end
-    end
+    ############################I think heartbeat is broken?
+    #heartbeat do |event|
+    #  now = Time.now
+    #  if now.hour == 0 and now.minute == 0
+    #    update_playlist_titles
+    #    save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
+    #    save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
+    #    save_hash_to_file hash: @watching_channels, filename: "watching_channels"
+    #  end
+    #end
   end
   def configure_commands
     command :stop do |event|
@@ -108,6 +111,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
         save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
         save_hash_to_file hash: @watching_channels, filename: "watching_channels"
+        save_hash_to_file hash: @delete_permsission, filename: "delete_permission"
         @owner.pm "Going down!"
         stop
       end
@@ -136,6 +140,19 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         end
       end
     end
+    command :delete do |event|
+      if @channel_playlists[channel.id.to_s].nil?
+        event.channel.send_message "No playlist to delete from!"
+      else
+        @delete_permission[channel.id.to_s].include? event.user.id
+        videos = process_message_for_videos message: event.message
+        if videos.size == 0
+          event.channel.send_message "No youtube video found in your command!"
+        else
+          
+        end
+      end
+    end
   end
   def initialize_channel(channel:, do_scrape: false)
     if channel.is_a? Array
@@ -149,10 +166,13 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         if @channel_playlists[channel.id.to_s].nil?
           @channel_playlists[channel.id.to_s] = @youtube_client.create_playlist(title: "#{channel.server.name}.#{channel.name}", privacy_status: "public").id
         end
+        if @delete_permission[channel.id.to_s].nil?
+          @delete_permission[channel.id.to_s] = Array.new
+        end
         if do_scrape
           videos = process_past_messages channel: channel
           unless videos.nil?
-            add_video_to_playlist video: videos, playlist_id: @channel_playlists[channel.id.to_s]
+            add_video_to_playlist video_id: videos, playlist_id: @channel_playlists[channel.id.to_s]
           end
         else
           message = channel.history(1)
@@ -198,44 +218,47 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       videos = Array.new
       message.text.scan(/\b((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#\&\?]{11})/).each do |match|
         video_id = match[6].chomp
-        is_duplicate = is_duplicate_video? playlist_id: @channel_playlists[message.channel.id.to_s], video_id: video_id
-        videos << {'is_duplicate' => is_duplicate, 'video_id' => video_id}
+        videos << video_id
       end
       videos
     else
       Array.new
     end
   end
-  def is_duplicate_video?(video_id:, playlist_id:)
+  def is_video_present?(video_id:, playlist_id:)
     playlist = Yt::Playlist.new id: playlist_id, auth: @youtube_client
     items = playlist.playlist_items
-    is_duplicate = false
+    is_present = false
     unless items.size == 0
-      items.each do |item|
-        if item.video_id == video_id
-          is_duplicate = true
-          break
-        end
-      end
+      items.select {|item| item.video_id == video_id}
+      is_present = items.size > 0
     end
-    is_duplicate
+    is_present
   end
-  def add_video_to_playlist(video:, playlist_id:)  
-    if video.is_a? Array
-      video = video.uniq
-      video = video.select { |v| not v['is_duplicate'] }
-      video.each do |v|
-        add_video_to_playlist video: v, playlist_id: playlist_id
+  def add_video_to_playlist(video_id:, playlist_id:, is_duplicate: nil)  
+    if video_id.is_a? Array
+      duplicates = Array.new
+      video_id = video_id.uniq
+      video_id = video_id.select do |v|
+        is_duplicate = is_video_present?(playlist_id: playlist_id, video_id: v)
+        duplicates << is_duplicate
+        not is_duplicate
       end
+      video_id.each do |v|
+        add_video_to_playlist video: v, playlist_id: playlist_id, is_duplicate: false
+      end
+      duplicates
     else
-      playlist = Yt::Playlist.new id: playlist_id, auth: @youtube_client
-      unless video['is_duplicate']
-        begin
-          playlist.add_video video['video_id']
-        rescue => error
-          puts "Error adding video #{video['video_id']} to playlist #{playlist_id}."
-        end
+      if is_duplicate.nil?
+        is_duplicate = is_video_present? playlist_id: playlist_id, video_id: video_id
       end
+      playlist = Yt::Playlist.new id: playlist_id, auth: @youtube_client
+      begin
+        playlist.add_video video_id
+      rescue => error
+        puts "Error adding video #{video_id} to playlist #{playlist_id}."
+      end
+      is_duplicate
     end
   end
   def update_playlist_titles
