@@ -70,7 +70,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
               else
                 response = "Added video to the following playlist:"
               end
-              event.channel.send_message "#{response} https://www.youtube.com/watch?v=#{videos[0]['video_id']}&list=#{@channel_playlists[event.channel.id.to_s]}"
+              event.channel.send_message "#{response} https://www.youtube.com/watch?v=#{videos[0]}&list=#{@channel_playlists[event.channel.id.to_s]}"
             elsif videos.size > 1
               event.channel.send_message "Added #{videos.size} videos to the following playlist: https://www.youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
             end
@@ -94,16 +94,15 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         end
       end
     end
-    ############################I think heartbeat is broken?
-    #heartbeat do |event|
-    #  now = Time.now
-    #  if now.hour == 0 and now.minute == 0
-    #    update_playlist_titles
-    #    save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
-    #    save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
-    #    save_hash_to_file hash: @watching_channels, filename: "watching_channels"
-    #  end
-    #end
+    heartbeat do |event|
+      now = Time.now
+      if now.hour == 0 and now.minute == 0
+        update_playlist_titles
+        save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
+        save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
+        save_hash_to_file hash: @watching_channels, filename: "watching_channels"
+      end
+    end
   end
   def configure_commands
     command :stop do |event|
@@ -229,6 +228,9 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         video_id = match[6].chomp
         videos << video_id
       end
+      if @do_delete
+        message.delete
+      end
       videos
     else
       Array.new
@@ -251,12 +253,18 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
   def add_video_to_playlist(video_id:, playlist_id:, is_duplicate: nil)  
     if video_id.is_a? Array
       duplicates = Array.new
+      count = 0
       video_id = video_id.uniq
       video_id = video_id.select do |v|
         is_duplicate = is_video_present?(playlist_id: playlist_id, video_id: v)
         duplicates << is_duplicate
+        count = count + 1
+        if count % 100 == 0
+          puts "  Done with #{count} videos..."
+        end
         not is_duplicate
       end
+      puts "  Done with #{count} videos..."
       video_id.each do |v|
         add_video_to_playlist video_id: v, playlist_id: playlist_id, is_duplicate: false
       end
@@ -347,19 +355,19 @@ if __FILE__ == $0
                                     refresh_token: options['refresh_token'],
                                     owner: options['owner'],
                                     prefix: '!',
-                                    do_delete: true)
+                                    do_delete: false)
         puts bot.invite_url
         bot.run
       rescue JSON::ParserError => e
         puts "Error: options.json is not a valid json file."
-        sleep
+        gets
       end
     else
       puts "Error: no options.json file found."
-      sleep
+      gets
     end
   else
     puts "Error: Invalid number of arguments. Expected 0 or 6, got #{ARGV.size}."
-    sleep
+    gets
   end
 end
