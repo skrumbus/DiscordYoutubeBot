@@ -143,8 +143,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     command :delete do |event|
       if @channel_playlists[event.channel.id.to_s].nil?
         event.channel.send_message "No playlist to delete from!"
-      else
-        @delete_permission[event.channel.id.to_s].include? event.user.id
+      elsif @delete_permission[event.channel.id.to_s].include? event.user.id or @owner.id == event.user.id or event.server.owner.id == event.user.id
         videos = process_message_for_videos message: event.message
         if videos.size == 0
           event.channel.send_message "No youtube video found in your command!"
@@ -159,6 +158,8 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
           end
           event.channel.send_message "Deleted #{videos.size} video(s) from playlist."
         end
+      else
+        event.channel.send_message "You don't have permission to perform that command!"
       end
     end
   end
