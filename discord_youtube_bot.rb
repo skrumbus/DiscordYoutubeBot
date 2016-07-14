@@ -111,7 +111,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
         save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
         save_hash_to_file hash: @watching_channels, filename: "watching_channels"
-        save_hash_to_file hash: @delete_permsission, filename: "delete_permission"
+        save_hash_to_file hash: @delete_permission, filename: "delete_permission"
         @owner.pm "Going down!"
         stop
       end
@@ -298,7 +298,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       if messages.size > 0
         new_most_recent_message = messages[0].id
       else
-        new_most_recent_message = nil
+        new_most_recent_message = @most_recent_messages[channel.id.to_s]
       end
       while messages.size > 0 do
         (is_forwards ? messages.reverse : messages).each do |message|
