@@ -56,7 +56,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
   end
   def configure_events
     message do |event|
-      unless event.text =~ /^!watch.*/
+      unless event.text =~ /^#{@prefix}.*/
         while @scraping[event.channel.id.to_s] do
         end
         if @watching_channels[event.channel.id.to_s]
@@ -72,7 +72,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
               end
               event.channel.send_message "#{response} https://www.youtube.com/watch?v=#{videos[0]['video_id']}&list=#{@channel_playlists[event.channel.id.to_s]}"
             elsif videos.size > 1
-              event.channel.send_message "Added #{non_duplicates.size} videos to the following playlist: https://www.youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
+              event.channel.send_message "Added #{videos.size} videos to the following playlist: https://www.youtube.com/playlist?list=#{@channel_playlists[event.channel.id.to_s]}"
             end
           end
         end
@@ -141,15 +141,23 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       end
     end
     command :delete do |event|
-      if @channel_playlists[channel.id.to_s].nil?
+      if @channel_playlists[event.channel.id.to_s].nil?
         event.channel.send_message "No playlist to delete from!"
       else
-        @delete_permission[channel.id.to_s].include? event.user.id
+        @delete_permission[event.channel.id.to_s].include? event.user.id
         videos = process_message_for_videos message: event.message
         if videos.size == 0
           event.channel.send_message "No youtube video found in your command!"
         else
-          
+          playlist = Yt::Playlist.new id: @channel_playlists[event.channel.id.to_s], auth: @youtube_client
+          videos.each do |v|
+            begin
+              playlist.delete_playlist_items video_id: v
+            rescue => e
+              puts "Error deleting #{v} from playlist #{@channel_playlists[event.channel.id.to_s]}."
+            end
+          end
+          event.channel.send_message "Deleted #{videos.size} video(s) from playlist."
         end
       end
     end
@@ -230,8 +238,12 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     items = playlist.playlist_items
     is_present = false
     unless items.size == 0
-      items.select {|item| item.video_id == video_id}
-      is_present = items.size > 0
+      items.each do |item|
+        if item.video_id == video_id
+          is_present = true
+          break
+        end
+      end
     end
     is_present
   end
@@ -245,7 +257,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
         not is_duplicate
       end
       video_id.each do |v|
-        add_video_to_playlist video: v, playlist_id: playlist_id, is_duplicate: false
+        add_video_to_playlist video_id: v, playlist_id: playlist_id, is_duplicate: false
       end
       duplicates
     else
@@ -264,8 +276,8 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
   def update_playlist_titles
     @channel_playlists.each do |c|
       playlist = Yt::Playlist.new id: c[1], auth: @youtube_client
-      chan = channel(c[0])
-      playlist.update title: "#{chan.server.name}.#{chan.name}"
+      channel = channel(c[0])
+      playlist.update title: "#{chan.server.name}.#{channel.name}"
     end
   end
   def process_past_messages(channel:)
@@ -289,13 +301,15 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
       end
       while messages.size > 0 do
         (is_forwards ? messages.reverse : messages).each do |message|
-          results = process_message_for_videos message: message
-          unless results.nil?
-            results.each do |result|
-              videos << result
+          unless message.user.id == profile.id or message.text =~ /^#{prefix}.*/
+            results = process_message_for_videos message: message
+            unless results.nil?
+              results.each do |result|
+                videos << result
+              end
             end
+            count = count + 1
           end
-          count = count + 1
         end
         puts "  Processed #{count} messages, found #{videos.size} videos..."
         new_most_recent_message = is_forwards ? messages[0].id : new_most_recent_message
@@ -331,7 +345,8 @@ if __FILE__ == $0
                                     client_secret: options['client_secret'],
                                     refresh_token: options['refresh_token'],
                                     owner: options['owner'],
-                                    prefix: '!')
+                                    prefix: '!',
+                                    do_delete: true)
         puts bot.invite_url
         bot.run
       rescue JSON::ParserError => e
