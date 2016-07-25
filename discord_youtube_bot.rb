@@ -96,7 +96,7 @@ class DiscordYoutubeBot < Discordrb::Commands::CommandBot
     end
     heartbeat do |event|
       now = Time.now
-      if now.hour == 0 and now.minute == 0
+      if now.hour == 0 and now.min == 0
         update_playlist_titles
         save_hash_to_file hash: @most_recent_messages, filename: "most_recent_messages"
         save_hash_to_file hash: @channel_playlists, filename: "channel_playlists"
